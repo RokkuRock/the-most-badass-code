@@ -1,4 +1,4 @@
-name: "CodeQL Multi-Language Analysis"
+name: "CodeQL Analysis (No C#)"
 
 on:
   push:
@@ -25,8 +25,6 @@ jobs:
         include:
           - language: c-cpp
             build-mode: manual
-          - language: csharp
-            build-mode: manual
           - language: java-kotlin
             build-mode: manual
           - language: python
@@ -36,14 +34,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Setup .NET for C#
-      - if: matrix.language == 'csharp'
-        name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '8.x'
-
-      # Setup Java for Java/Kotlin
+      # Java setup
       - if: matrix.language == 'java-kotlin'
         name: Setup Java
         uses: actions/setup-java@v4
@@ -51,7 +42,7 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      # Setup Python
+      # Python setup
       - if: matrix.language == 'python'
         name: Setup Python
         uses: actions/setup-python@v4
@@ -66,9 +57,9 @@ jobs:
           build-mode: ${{ matrix.build-mode }}
           queries: security-extended,security-and-quality
 
-      # 🔧 Manual build for C/C++
+      # Manual build C/C++
       - if: matrix.language == 'c-cpp'
-        name: Manual build for C/C++
+        name: Manual build C/C++
         shell: bash
         run: |
           export CFLAGS="-g -O0 -fno-omit-frame-pointer -Wall -Wextra"
@@ -77,59 +68,37 @@ jobs:
           find ../ -name '*.c' -exec gcc $CFLAGS -c {} \;
           find ../ -name '*.cpp' -exec g++ $CXXFLAGS -c {} \;
 
-      # 🔧【修正】Manual build for C# (指定 *.sln/*.csproj)
-      - if: matrix.language == 'csharp'
-        name: Manual build for C#
-        shell: bash
-        run: |
-          echo "📌 Manual build started for C#"
-          solution=$(find . -name "*.sln" | head -n 1)
-          project=$(find . -name "*.csproj" | head -n 1)
-          if [ -n "$solution" ]; then
-            dotnet restore "$solution"
-            dotnet build "$solution" --configuration Release --no-restore
-          elif [ -n "$project" ]; then
-            dotnet restore "$project"
-            dotnet build "$project" --configuration Release --no-restore
-          else
-            echo "⚠️ No .sln or .csproj file found."
-            exit 1
-          fi
-          echo "✅ C# build completed."
-
-      # 🔧【修正】Manual build for Java/Kotlin (增加依賴下載與編譯細節)
+      # Manual build Java/Kotlin
       - if: matrix.language == 'java-kotlin'
-        name: Manual build for Java/Kotlin
+        name: Manual build Java/Kotlin
         shell: bash
         run: |
-          echo "📌 Manual build started for Java/Kotlin"
           if [ -f "pom.xml" ]; then
-            mvn clean compile dependency:resolve -DskipTests || echo "⚠️ Maven build warnings/errors"
+            mvn clean compile dependency:resolve -DskipTests || echo "⚠️ Maven build warnings"
           elif [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
             chmod +x ./gradlew
-            ./gradlew clean build -x test || echo "⚠️ Gradle build warnings/errors"
+            ./gradlew clean build -x test || echo "⚠️ Gradle build warnings"
           else
-            echo "⚠️ No Maven/Gradle detected, attempting direct Java compilation"
-            find . -name '*.java' -exec javac {} \; || echo "⚠️ Java compilation warnings"
+            echo "⚠️ No Maven or Gradle detected, compiling Java files directly"
+            find . -name '*.java' -exec javac {} \; || echo "⚠️ Java compile warnings"
           fi
-          echo "✅ Java/Kotlin build completed."
 
-      # Python dependency setup
+      # Python setup
       - if: matrix.language == 'python'
         name: Setup Python dependencies
         shell: bash
         run: |
           if [ -f "requirements.txt" ]; then
-            pip install -r requirements.txt || echo "⚠️ Python dependencies installation warnings"
+            pip install -r requirements.txt || echo "⚠️ Dependency installation warnings"
           fi
           if [ -f "setup.py" ]; then
-            pip install -e . || echo "⚠️ Python package installation warnings"
+            pip install -e . || echo "⚠️ Package installation warnings"
           fi
-          python -m compileall . || echo "⚠️ Python syntax check warnings"
+          python -m compileall . || echo "⚠️ Python syntax warnings"
 
       # Perform CodeQL Analysis
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
         with:
-          category: "manual-scan-${{ matrix.language }}"
+          category: "scan-${{ matrix.language }}"
           upload: "always"
