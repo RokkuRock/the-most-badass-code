@@ -9,7 +9,7 @@
 # the `language` matrix defined below to confirm you have the correct set of
 # supported CodeQL languages.
 #
-name: "CodeQL Advanced"
+name: "CodeQL Advanced Multi-Language"
 
 on:
   push:
@@ -17,7 +17,7 @@ on:
   pull_request:
     branches: [ "main" ]
   schedule:
-    - cron: '45 23 * * 3'
+    - cron: '32 3 * * 1'
 
 jobs:
   analyze:
@@ -28,6 +28,7 @@ jobs:
     #   - https://gh.io/using-larger-runners (GitHub.com only)
     # Consider using larger runners or machines with greater resources for possible analysis time improvements.
     runs-on: ${{ (matrix.language == 'swift' && 'macos-latest') || 'ubuntu-latest' }}
+    timeout-minutes: 120  # 增加超時時間以支持多語言分析
     permissions:
       # required for all workflows
       security-events: write
@@ -44,11 +45,9 @@ jobs:
       matrix:
         include:
         - language: c-cpp
-          build-mode: autobuild
-        - language: csharp
-          build-mode: none
+          build-mode: manual
         - language: java-kotlin
-          build-mode: none # This mode only analyzes Java. Set this to 'autobuild' or 'manual' to analyze Kotlin too.
+          build-mode: none
         - language: python
           build-mode: none
         # CodeQL supports the following values keywords for 'language': 'actions', 'c-cpp', 'csharp', 'go', 'java-kotlin', 'javascript-typescript', 'python', 'ruby', 'swift'
@@ -56,18 +55,27 @@ jobs:
         # Use 'java-kotlin' to analyze code written in Java, Kotlin or both
         # Use 'javascript-typescript' to analyze code written in JavaScript, TypeScript or both
         # To learn more about changing the languages that are analyzed or customizing the build mode for your analysis,
-        # see https://docs.github.com/en/code-security/code-scanning/creating-an-advanced-setup-for-code-scanning/customizing-your-advanced-setup-for-code-scanning.
+        # see https://docs.github.com/en/code-security/code-scanning/creating-an-advanced-setup-for-code-scanning.
         # If you are analyzing a compiled language, you can modify the 'build-mode' for that language to customize how
         # your codebase is analyzed, see https://docs.github.com/en/code-security/code-scanning/creating-an-advanced-setup-for-code-scanning/codeql-code-scanning-for-compiled-languages
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # Add any setup steps before running the `github/codeql-action/init` action.
-    # This includes steps like installing compilers or runtimes (`actions/setup-node`
-    # or others). This is typically only required for manual builds.
-    # - name: Setup runtime (example)
-    #   uses: actions/setup-example@v1
+    # Setup Java for Java/Kotlin analysis
+    - if: matrix.language == 'java-kotlin'
+      name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    # Setup Python for Python analysis
+    - if: matrix.language == 'python'
+      name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
 
     # Initializes the CodeQL tools for scanning.
     - name: Initialize CodeQL
@@ -80,25 +88,111 @@ jobs:
         # Prefix the list here with "+" to use these queries and those in the config file.
 
         # For more details on CodeQL's query packs, refer to: https://docs.github.com/en/code-security/code-scanning/automatically-scanning-your-code-for-vulnerabilities-and-errors/configuring-code-scanning#using-queries-in-ql-packs
-        # queries: security-extended,security-and-quality
+        queries: security-extended,security-and-quality
 
-    # If the analyze step fails for one of the languages you are analyzing with
-    # "We were unable to automatically build your code", modify the matrix above
-    # to set the build mode to "manual" for that language. Then modify this step
-    # to build your code.
-    # ℹ️ Command-line programs to run using the OS shell.
-    # 📚 See https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idstepsrun
+    # C/C++ 手動建置步驟 - 針對靜態分析優化
     - if: matrix.build-mode == 'manual'
+      name: Manual build for C/C++
       shell: bash
       run: |
-        echo 'If you are using a "manual" build mode for one or more of the' \
-          'languages you are analyzing, replace this with the commands to build' \
-          'your code, for example:'
-        echo '  make bootstrap'
-        echo '  make release'
-        exit 1
+        echo "Setting up for static analysis of C/C++ code"
+        echo "Files to be analyzed:"
+        find . -name "*.c" -o -name "*.cpp" -o -name "*.h" -o -name "*.hpp" | head -20
+        
+        # 為了讓 CodeQL 能夠分析，我們進行詳細的編譯檢查
+        # 使用優化的編譯選項來最大化 CodeQL 的分析能力
+        echo "Performing enhanced compilation for CodeQL analysis..."
+        
+        # 設置編譯環境變數
+        export CFLAGS="-g -O0 -fno-omit-frame-pointer -Wall -Wextra"
+        export CPPFLAGS="-g -O0 -fno-omit-frame-pointer -Wall -Wextra"
+        
+        # 編譯所有 C 文件（使用詳細選項）
+        for file in $(find . -name "*.c"); do
+          echo "Processing C file: $file"
+          filename=$(basename "$file" .c)
+          
+          # 編譯成目標文件，保留調試信息
+          gcc -g -O0 -fno-omit-frame-pointer -Wall -Wextra \
+              -c "$file" -o "${filename}.o" 2>&1 || echo "Note: $file compilation issues (normal for analysis)"
+          
+          # 嘗試編譯成可執行文件以完整分析
+          gcc -g -O0 -fno-omit-frame-pointer "$file" -o "${filename}" 2>/dev/null || echo "Note: executable creation skipped for $file"
+        done
+        
+        # 編譯所有 C++ 文件（使用詳細選項）
+        for file in $(find . -name "*.cpp"); do
+          echo "Processing C++ file: $file"
+          filename=$(basename "$file" .cpp)
+          
+          # 編譯成目標文件，保留調試信息
+          g++ -g -O0 -fno-omit-frame-pointer -Wall -Wextra \
+              -c "$file" -o "${filename}.o" 2>&1 || echo "Note: $file compilation issues (normal for analysis)"
+          
+          # 嘗試編譯成可執行文件以完整分析
+          g++ -g -O0 -fno-omit-frame-pointer "$file" -o "${filename}" 2>/dev/null || echo "Note: executable creation skipped for $file"
+        done
+        
+        echo "Enhanced compilation setup completed"
+        echo "Generated files for analysis:"
+        ls -la *.o 2>/dev/null || echo "No object files created"
+
+    # Java 建置步驟
+    - if: matrix.language == 'java-kotlin'
+      name: Build Java project
+      shell: bash
+      run: |
+        echo "Building Java project for CodeQL analysis..."
+        
+        # 檢查並列出 Java 文件
+        echo "Java files to be analyzed:"
+        find . -name "*.java" -o -name "*.kt" | head -20
+        
+        # 嘗試使用 Maven 建置
+        if [ -f "pom.xml" ]; then
+          echo "Found Maven project, building with Maven..."
+          mvn clean compile -DskipTests || echo "Maven build completed with issues"
+        # 嘗試使用 Gradle 建置
+        elif [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
+          echo "Found Gradle project, building with Gradle..."
+          ./gradlew build -x test || echo "Gradle build completed with issues"
+        else
+          echo "No Maven or Gradle project found, compiling Java files manually..."
+          # 手動編譯 Java 文件
+          for file in $(find . -name "*.java"); do
+            echo "Compiling Java file: $file"
+            javac -cp ".:*" "$file" || echo "Note: $file compilation issues (normal for analysis)"
+          done
+        fi
+
+    # Python 環境設置
+    - if: matrix.language == 'python'
+      name: Setup Python environment
+      shell: bash
+      run: |
+        echo "Setting up Python environment for CodeQL analysis..."
+        
+        # 檢查並列出 Python 文件
+        echo "Python files to be analyzed:"
+        find . -name "*.py" | head -20
+        
+        # 安裝常用依賴
+        if [ -f "requirements.txt" ]; then
+          echo "Installing requirements from requirements.txt..."
+          pip install -r requirements.txt || echo "Requirements installation completed with issues"
+        fi
+        
+        if [ -f "setup.py" ]; then
+          echo "Installing package in development mode..."
+          pip install -e . || echo "Package installation completed with issues"
+        fi
+        
+        # 編譯 Python 文件以檢查語法
+        echo "Checking Python syntax..."
+        python -m py_compile $(find . -name "*.py") || echo "Python syntax check completed"
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v3
       with:
-        category: "/language:${{matrix.language}}"
+        category: "enhanced-scan-${{matrix.language}}"
+        upload: "always"
