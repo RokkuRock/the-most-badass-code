@@ -22,28 +22,38 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [ 'c-cpp', 'csharp', 'java-kotlin', 'python' ]
+        include:
+          - language: c-cpp
+            build-mode: manual
+          - language: csharp
+            build-mode: manual
+          - language: java-kotlin
+            build-mode: manual
+          - language: python
+            build-mode: none
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Setup environments
-      - name: Setup .NET (C#)
-        if: matrix.language == 'csharp'
+      # Setup .NET (C#)
+      - if: matrix.language == 'csharp'
+        name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.x'
 
-      - name: Setup Java (Java/Kotlin)
-        if: matrix.language == 'java-kotlin'
+      # Setup Java (Java/Kotlin)
+      - if: matrix.language == 'java-kotlin'
+        name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Python
-        if: matrix.language == 'python'
+      # Setup Python
+      - if: matrix.language == 'python'
+        name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
@@ -53,66 +63,55 @@ jobs:
         uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
-          build-mode: manual
+          build-mode: ${{ matrix.build-mode }}
           queries: security-extended,security-and-quality
 
       # 🔧 手動建置步驟：C/C++
-      - name: Manual build for C/C++
-        if: matrix.language == 'c-cpp'
+      - if: matrix.language == 'c-cpp'
+        name: Manual build for C/C++
         shell: bash
         run: |
-          echo "Starting manual build for C/C++ analysis..."
           export CFLAGS="-g -O0 -fno-omit-frame-pointer -Wall -Wextra"
           export CXXFLAGS="-g -O0 -fno-omit-frame-pointer -Wall -Wextra"
           mkdir -p build && cd build
-          find ../ -type f -name '*.c' | while read -r file; do
-            gcc $CFLAGS -c "$file" || echo "Issue compiling $file"
-          done
-          find ../ -type f -name '*.cpp' | while read -r file; do
-            g++ $CXXFLAGS -c "$file" || echo "Issue compiling $file"
-          done
-          echo "C/C++ manual build completed."
+          find ../ -name '*.c' -exec gcc $CFLAGS -c {} \;
+          find ../ -name '*.cpp' -exec g++ $CXXFLAGS -c {} \;
 
-      # 🔧 手動建置步驟：C#
-      - name: Manual build for C#
-        if: matrix.language == 'csharp'
+      # 🔧【修正後的手動建置步驟：C#】
+      - if: matrix.language == 'csharp'
+        name: Manual build for C#
         shell: bash
         run: |
-          echo "Starting manual build for C# analysis..."
-          dotnet restore || echo "Issue restoring packages"
-          dotnet build --no-restore --configuration Release || echo "Issue building project"
-          echo "C# manual build completed."
+          echo "📌 Manual build started for C#"
+          dotnet restore
+          dotnet build --configuration Release --no-restore
+          echo "✅ Manual build completed for C#"
 
       # 🔧 手動建置步驟：Java/Kotlin
-      - name: Manual build for Java/Kotlin
-        if: matrix.language == 'java-kotlin'
+      - if: matrix.language == 'java-kotlin'
+        name: Manual build for Java/Kotlin
         shell: bash
         run: |
-          echo "Starting manual build for Java/Kotlin analysis..."
           if [ -f "pom.xml" ]; then
             mvn clean compile -DskipTests || echo "Maven build warnings/errors"
           elif [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
             ./gradlew clean build -x test || echo "Gradle build warnings/errors"
           else
-            echo "No Maven or Gradle files detected, compiling Java files directly"
-            find . -name '*.java' -exec javac {} \; || echo "Manual Java compilation issues"
+            find . -name '*.java' -exec javac {} \; || echo "Java compile warnings"
           fi
-          echo "Java/Kotlin manual build completed."
 
-      # 🔧 手動建置步驟：Python
-      - name: Manual setup for Python
-        if: matrix.language == 'python'
+      # 🔧 Python dependency setup (因為不支援 manual 模式)
+      - if: matrix.language == 'python'
+        name: Setup Python dependencies
         shell: bash
         run: |
-          echo "Starting manual setup for Python analysis..."
           if [ -f "requirements.txt" ]; then
-            pip install -r requirements.txt || echo "Issue installing requirements"
+            pip install -r requirements.txt || echo "Dependency installation warnings"
           fi
           if [ -f "setup.py" ]; then
-            pip install -e . || echo "Issue installing package"
+            pip install -e . || echo "Package installation warnings"
           fi
-          python -m compileall . || echo "Python compilation issues"
-          echo "Python manual setup completed."
+          python -m compileall . || echo "Python syntax check warnings"
 
       # Perform CodeQL Analysis
       - name: Perform CodeQL Analysis
