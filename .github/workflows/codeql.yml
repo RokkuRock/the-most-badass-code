@@ -1,4 +1,4 @@
-name: "CodeQL Advanced Multi-Language"
+name: "CodeQL Manual Multi-Language"
 
 on:
   push:
@@ -11,7 +11,7 @@ on:
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
-    runs-on: ${{ (matrix.language == 'swift' && 'macos-latest') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
       security-events: write
@@ -22,38 +22,28 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - language: c-cpp
-            build-mode: manual
-          - language: csharp
-            build-mode: autobuild
-          - language: java-kotlin
-            build-mode: autobuild
-          - language: python
-            build-mode: none
+        language: [ 'c-cpp', 'csharp', 'java-kotlin', 'python' ]
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Setup .NET (C#)
-      - if: matrix.language == 'csharp'
-        name: Setup .NET
+      # Setup environments
+      - name: Setup .NET (C#)
+        if: matrix.language == 'csharp'
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.x'
 
-      # Setup Java (Java/Kotlin)
-      - if: matrix.language == 'java-kotlin'
-        name: Setup Java
+      - name: Setup Java (Java/Kotlin)
+        if: matrix.language == 'java-kotlin'
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      # Setup Python
-      - if: matrix.language == 'python'
-        name: Setup Python
+      - name: Setup Python
+        if: matrix.language == 'python'
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
@@ -63,60 +53,70 @@ jobs:
         uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
-          build-mode: ${{ matrix.build-mode }}
+          build-mode: manual
           queries: security-extended,security-and-quality
 
-      # 🔧 手動建置 C/C++
-      - if: matrix.language == 'c-cpp'
-        name: Manual build for C/C++
+      # 🔧 手動建置步驟：C/C++
+      - name: Manual build for C/C++
+        if: matrix.language == 'c-cpp'
         shell: bash
         run: |
           echo "Starting manual build for C/C++ analysis..."
-
           export CFLAGS="-g -O0 -fno-omit-frame-pointer -Wall -Wextra"
           export CXXFLAGS="-g -O0 -fno-omit-frame-pointer -Wall -Wextra"
-
           mkdir -p build && cd build
-
-          # Compile all C files
-          echo "Compiling C files..."
           find ../ -type f -name '*.c' | while read -r file; do
-            gcc $CFLAGS -c "$file" -o "$(basename "$file" .c).o" || echo "Warning: Issue compiling $file"
+            gcc $CFLAGS -c "$file" || echo "Issue compiling $file"
           done
-
-          # Compile all C++ files
-          echo "Compiling C++ files..."
           find ../ -type f -name '*.cpp' | while read -r file; do
-            g++ $CXXFLAGS -c "$file" -o "$(basename "$file" .cpp).o" || echo "Warning: Issue compiling $file"
+            g++ $CXXFLAGS -c "$file" || echo "Issue compiling $file"
           done
-
           echo "C/C++ manual build completed."
 
-      # 🔧 C# 自動建置（dotnet）
-      - if: matrix.language == 'csharp'
-        name: Autobuild for C#
-        uses: github/codeql-action/autobuild@v3
-
-      # 🔧 Java/Kotlin 自動建置（Maven/Gradle）
-      - if: matrix.language == 'java-kotlin'
-        name: Autobuild for Java/Kotlin
-        uses: github/codeql-action/autobuild@v3
-
-      # 🔧 Python（非編譯語言，建議手動安裝依賴）
-      - if: matrix.language == 'python'
-        name: Setup Python dependencies
+      # 🔧 手動建置步驟：C#
+      - name: Manual build for C#
+        if: matrix.language == 'csharp'
         shell: bash
         run: |
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt || echo "Warning: Issue installing Python requirements"
-          fi
-          if [ -f setup.py ]; then
-            pip install -e . || echo "Warning: Issue installing Python package"
-          fi
+          echo "Starting manual build for C# analysis..."
+          dotnet restore || echo "Issue restoring packages"
+          dotnet build --no-restore --configuration Release || echo "Issue building project"
+          echo "C# manual build completed."
 
-      # 執行 CodeQL 分析
+      # 🔧 手動建置步驟：Java/Kotlin
+      - name: Manual build for Java/Kotlin
+        if: matrix.language == 'java-kotlin'
+        shell: bash
+        run: |
+          echo "Starting manual build for Java/Kotlin analysis..."
+          if [ -f "pom.xml" ]; then
+            mvn clean compile -DskipTests || echo "Maven build warnings/errors"
+          elif [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
+            ./gradlew clean build -x test || echo "Gradle build warnings/errors"
+          else
+            echo "No Maven or Gradle files detected, compiling Java files directly"
+            find . -name '*.java' -exec javac {} \; || echo "Manual Java compilation issues"
+          fi
+          echo "Java/Kotlin manual build completed."
+
+      # 🔧 手動建置步驟：Python
+      - name: Manual setup for Python
+        if: matrix.language == 'python'
+        shell: bash
+        run: |
+          echo "Starting manual setup for Python analysis..."
+          if [ -f "requirements.txt" ]; then
+            pip install -r requirements.txt || echo "Issue installing requirements"
+          fi
+          if [ -f "setup.py" ]; then
+            pip install -e . || echo "Issue installing package"
+          fi
+          python -m compileall . || echo "Python compilation issues"
+          echo "Python manual setup completed."
+
+      # Perform CodeQL Analysis
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
         with:
-          category: "enhanced-scan-${{matrix.language}}"
+          category: "manual-scan-${{ matrix.language }}"
           upload: "always"
