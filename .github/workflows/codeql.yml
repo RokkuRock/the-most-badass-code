@@ -1,4 +1,4 @@
-name: "CodeQL Manual Multi-Language"
+name: "CodeQL Multi-Language Analysis"
 
 on:
   push:
@@ -36,14 +36,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Setup .NET (C#)
+      # Setup .NET for C#
       - if: matrix.language == 'csharp'
         name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.x'
 
-      # Setup Java (Java/Kotlin)
+      # Setup Java for Java/Kotlin
       - if: matrix.language == 'java-kotlin'
         name: Setup Java
         uses: actions/setup-java@v4
@@ -66,7 +66,7 @@ jobs:
           build-mode: ${{ matrix.build-mode }}
           queries: security-extended,security-and-quality
 
-      # 🔧 手動建置步驟：C/C++
+      # 🔧 Manual build for C/C++
       - if: matrix.language == 'c-cpp'
         name: Manual build for C/C++
         shell: bash
@@ -77,41 +77,55 @@ jobs:
           find ../ -name '*.c' -exec gcc $CFLAGS -c {} \;
           find ../ -name '*.cpp' -exec g++ $CXXFLAGS -c {} \;
 
-      # 🔧【修正後的手動建置步驟：C#】
+      # 🔧【修正】Manual build for C# (指定 *.sln/*.csproj)
       - if: matrix.language == 'csharp'
         name: Manual build for C#
         shell: bash
         run: |
           echo "📌 Manual build started for C#"
-          dotnet restore
-          dotnet build --configuration Release --no-restore
-          echo "✅ Manual build completed for C#"
+          solution=$(find . -name "*.sln" | head -n 1)
+          project=$(find . -name "*.csproj" | head -n 1)
+          if [ -n "$solution" ]; then
+            dotnet restore "$solution"
+            dotnet build "$solution" --configuration Release --no-restore
+          elif [ -n "$project" ]; then
+            dotnet restore "$project"
+            dotnet build "$project" --configuration Release --no-restore
+          else
+            echo "⚠️ No .sln or .csproj file found."
+            exit 1
+          fi
+          echo "✅ C# build completed."
 
-      # 🔧 手動建置步驟：Java/Kotlin
+      # 🔧【修正】Manual build for Java/Kotlin (增加依賴下載與編譯細節)
       - if: matrix.language == 'java-kotlin'
         name: Manual build for Java/Kotlin
         shell: bash
         run: |
+          echo "📌 Manual build started for Java/Kotlin"
           if [ -f "pom.xml" ]; then
-            mvn clean compile -DskipTests || echo "Maven build warnings/errors"
+            mvn clean compile dependency:resolve -DskipTests || echo "⚠️ Maven build warnings/errors"
           elif [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
-            ./gradlew clean build -x test || echo "Gradle build warnings/errors"
+            chmod +x ./gradlew
+            ./gradlew clean build -x test || echo "⚠️ Gradle build warnings/errors"
           else
-            find . -name '*.java' -exec javac {} \; || echo "Java compile warnings"
+            echo "⚠️ No Maven/Gradle detected, attempting direct Java compilation"
+            find . -name '*.java' -exec javac {} \; || echo "⚠️ Java compilation warnings"
           fi
+          echo "✅ Java/Kotlin build completed."
 
-      # 🔧 Python dependency setup (因為不支援 manual 模式)
+      # Python dependency setup
       - if: matrix.language == 'python'
         name: Setup Python dependencies
         shell: bash
         run: |
           if [ -f "requirements.txt" ]; then
-            pip install -r requirements.txt || echo "Dependency installation warnings"
+            pip install -r requirements.txt || echo "⚠️ Python dependencies installation warnings"
           fi
           if [ -f "setup.py" ]; then
-            pip install -e . || echo "Package installation warnings"
+            pip install -e . || echo "⚠️ Python package installation warnings"
           fi
-          python -m compileall . || echo "Python syntax check warnings"
+          python -m compileall . || echo "⚠️ Python syntax check warnings"
 
       # Perform CodeQL Analysis
       - name: Perform CodeQL Analysis
